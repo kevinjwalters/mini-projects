@@ -1,7 +1,8 @@
 #!/usr/bin/python3
 
-### svgtopy v0.9
+### svgtopy v1.0
 """Print vectors from an SVG input file in python list format
+for easy pasting into a program.
 
 This is Python code not intended for running on a microcontroller board.
 """
