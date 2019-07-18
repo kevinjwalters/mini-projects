@@ -1,9 +1,10 @@
 #!/usr/bin/python3
 
-### pngtowav v0.9
-### Convert a list of png images to pseudo composite video in wav file form
+### pngtowav v1.0
+"""Convert a list of png images to pseudo composite video in wav file form.
 
-### This is Python code not intended for running on a microcontroller board
+This is Python code not intended for running on a microcontroller board.
+"""
 
 ### MIT License
 
@@ -27,129 +28,145 @@
 ### OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 ### SOFTWARE.
 
-
-### TODO - PAD IMAGE TO SCOPE RATIO which is 10 x 8 but 10 x 6 maps nicely to 0.5V per square
-### TODO - quantize to 10bit or just leave it as is for high res DACs?
-### TODO - work out how flyback time affects things - is this why there's an angle on image
-
-### Out of focus looks good!
-
 import getopt
 import sys
 import array
-import struct
-
-import imageio
 import wave
 
+import imageio
+
+
 ### globals
+### pylint: disable=invalid-name
 ### start_offset of 1 can help if triggering on oscilloscope
 ### is missing alternate lines
 debug = 0
 verbose = False
 movie_file = False
-output = "dacanim.wav"
+output_filename = "dacanim.wav"
 fps = 50
-threshold = 128
+threshold = 128  ### pixel level
 replaceforsync = False
 start_offset = 1
 
 max_dac_v = 3.3
 ### 16 bit wav files always use signed representation for data
-offtopscreen = 32767      ### 3.30V
-syncvalue    = -32768     ### 0.00V
+dac_offtop = 2**15-1  ### 3.30V
+dac_sync = -2**15     ### 0.00V
 ### image from 3.00V to 0.30V
-topvalue     = round(3.00 / max_dac_v * 65535) - 32768
-bottomvalue  = round(0.30 / max_dac_v * 65535) - 32768
+dac_top = round(3.00 / max_dac_v * (2**16-1)) - 2**15
+dac_bottom = round(0.30 / max_dac_v * (2**16-1)) - 2**15
 
 
-def usage(exit_code):
-    print("pngtowav: [-f fps] [-h] [-m] [-o outputfilename] [-r] [-s lineoffset] [-v]",
+def usage(exit_code):  ### pylint: disable=missing-docstring
+    print("pngtowav: "
+          + "[-d] [-f fps] [-h] [-m] [-o outputfilename] [-r] [-s lineoffset] [-t threshold] [-v]",
           file=sys.stderr)
     if exit_code is not None:
         sys.exit(exit_code)
 
-def main(cmdlineargs):
-    global debug, fps, movie_file, output, replaceforsync
-    global threshold, start_offset, verbose
+
+def image_to_dac(img, row_offset, first_pix, dac_y_range):
+    """Convert a single image to DAC output."""
+    dac_out = array.array("h", [])
+
+    img_height, img_width = img.shape
+    if verbose:
+        print("W,H", img_width, img_height)
+
+    for row_o in range(img_height):
+        row = (row_o + row_offset) % img_height
+        ### Currently using 0 to (n-1)/n range
+        y_pos = round(dac_top - row / (img_height - 1) * dac_y_range)
+        if verbose:
+            print("Adding row", row, "at y_pos", y_pos)
+        dac_out.extend(array.array("h",
+                                   [dac_sync]
+                                   + [y_pos if x >= threshold else dac_offtop
+                                      for x in img[row, first_pix:]]))
+    return dac_out, img_width, img_height
+
+
+def write_wav(filename, data, framerate):
+    """Create one channel 16bit wav file."""
+    wav_file = wave.open(filename, "w")
+    nchannels = 1
+    sampwidth = 2
+    nframes = len(data)
+    comptype = "NONE"
+    compname = "not compressed"
+    if verbose:
+        print("Writing wav file", filename, "at rate", framerate,
+              "with", nframes, "samples")
+    wav_file.setparams((nchannels, sampwidth, framerate, nframes,
+                        comptype, compname))
+    wav_file.writeframes(data)
+    wav_file.close()
+
+
+def main(cmdlineargs):  ### pylint: disable=too-many-branches
+    """main(args)"""
+    global debug, fps, movie_file, output_filename, replaceforsync  ### pylint: disable=global-statement
+    global threshold, start_offset, verbose  ### pylint: disable=global-statement
 
     try:
         opts, args = getopt.getopt(cmdlineargs,
-                                   "f:hmo:rs:v", ["help", "output="])
+                                   "f:hmo:rs:t:v", ["help", "output="])
     except getopt.GetoptError as err:
         print(err,
               file=sys.stderr)
         usage(2)
     for opt, arg in opts:
-        if opt == "-f":
+        if opt == "-d":  ### pylint counts these towards too-many-branches :(
+            debug = 1
+        elif opt == "-f":
             fps = int(arg)
         elif opt in ("-h", "--help"):
-            usage()
-            sys.exit()
+            usage(0)
         elif opt == "-m":
-             movie_file = True
+            movie_file = True
         elif opt in ("-o", "--output"):
-            output = arg
+            output_filename = arg
         elif opt == "-r":
             replaceforsync = True
         elif opt == "-s":
             start_offset = int(arg)
+        elif opt == "-t":
+            threshold = int(arg)
         elif opt == "-v":
             verbose = True
         else:
-            print("BAD OPTION",
+            print("Internal error: unhandled option",
                   file=sys.stderr)
-            sys.exit(2)
+            sys.exit(3)
 
-    raw_output = array.array("h", [])
+    dac_samples = array.array("h", [])
 
     ### Decide whether to replace first column with sync pulse
     ### or add it as an additional column
-    if replaceforsync:
-        firstpix = 1
-    else:
-        firstpix = 0
+    first_pix = 1 if replaceforsync else 0
 
-    ### Reach each frame, either
+    ### Read each frame, either
     ### many single image filenames in args or
     ### one or more video (animated gifs) (needs -m on command line)
-    screenyrange = topvalue - bottomvalue
+    dac_y_range = dac_top - dac_bottom
     row_offset = 0
     for arg in args:
-        if verbose: print("PROCESSING", arg)
+        if verbose:
+            print("PROCESSING", arg)
         if movie_file:
             images = imageio.mimread(arg)
         else:
             images = [imageio.imread(arg)]
 
         for img in images:
-            img_height, img_width = img.shape
-            if verbose: print("W,H", img_width, img_height)
-            for row_o in range(img_height):
-                row = (row_o + row_offset) % img_height
-                ### Currently using 0 to n-1/n range
-                ypos = round(topvalue - row / (img_height - 1) * screenyrange)
-                if verbose: print("Adding row", row, "at ypos", ypos)
-                raw_output.extend(array.array("h",
-                                  [syncvalue]
-                                  + [ypos if x >= threshold else offtopscreen
-                                     for x in img[row, firstpix:]]))
+            img_output, width, height = image_to_dac(img, row_offset,
+                                                     first_pix, dac_y_range)
+            dac_samples.extend(img_output)
             row_offset += start_offset
 
-    ### Write wav file
-    wav_filename = output
-    wav_file = wave.open(wav_filename, "w")
-    nchannels = 1
-    sampwidth = 2
-    framerate = (img_width + (1 - firstpix)) * img_height * fps
-    nframes = len(raw_output)
-    comptype = "NONE"
-    compname = "not compressed"
-    if verbose: print("Writing wav file", wav_filename, "at rate", framerate, "with", nframes, "samples")
-    wav_file.setparams((nchannels, sampwidth, framerate, nframes,
-                        comptype, compname))
-    wav_file.writeframes(raw_output)
-    wav_file.close()
+    write_wav(output_filename, dac_samples,
+              (width + (1 - first_pix)) * height * fps)
 
 
 if __name__ == "__main__":
