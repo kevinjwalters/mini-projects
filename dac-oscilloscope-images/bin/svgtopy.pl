@@ -1,9 +1,10 @@
 #!/usr/bin/python3
 
 ### svgtopy v0.9
-### Print vectors from an SVG input file in python list format
+"""Print vectors from an SVG input file in python list format
 
-### This is Python code not intended for running on a microcontroller board
+This is Python code not intended for running on a microcontroller board.
+"""
 
 ### MIT License
 
@@ -35,80 +36,93 @@
 
 import getopt
 import sys
-import array
-import struct
 import re
 ##import fileinput
 import xml.etree.ElementTree as ET
 
 ### globals
+### pylint: disable=invalid-name
 debug = 0
 verbose = False
 
 
-def usage():
+def usage(exit_code):  ### pylint: disable=missing-docstring
     print("""Usage: svgtopy [-d] [-h] [-v] [--help]
 Convert an svg file from from standard input to comma-separated tuples
 on standard output for inclusion as a list in a python program.""",
           file=sys.stderr)
+    if exit_code is not None:
+        sys.exit(exit_code)
 
-def main(cmdlineargs):
-    global debug, verbose
 
-    try:
-        opts, args = getopt.getopt(cmdlineargs, 
-                                   "dhv", ["help"])
-    except getopt.GetoptError as err:
-        print(err,
-              file=sys.stderr)
-        usage()
-        sys.exit(2)
-    for o, a in opts:
-        if o == "-d":
-            debug = True
-        elif o == "-v":
-            verbose = True
-        elif o in ("-h", "--help"):
-            usage()
-            sys.exit()
-        else:
-            print("unhandled option")
-            sys.exit(2)
+def search_path_d(svgdata, point_groups):
+    """Look for M and L in the SVG d attribute of a path node"""
 
-    ns = { 'svg': 'http://www.w3.org/2000/svg' }
-    tree = ET.parse(sys.stdin)
-    point_groups = []
     points = []
-    for path in tree.findall('svg:path', ns):
-        svgdata = path.attrib['d']
-        if verbose: print("Processing path with {0:d} length".format(len(svgdata)))
-        for match in re.finditer("([A-Za-z])([\d\.]+)\s+([\d\.]+)\s*", svgdata):           
-            if match:
-                cmd = match.group(1)
-                if cmd == "M":  ### Start of a new part
-                    x, y = match.group(2, 3)
-                    if points:
-                        point_groups.append(points) 
-                        points = []
-                    points.append((float(x), float(y)))
-                    if debug: print("M pos", x, y)
+    for match in re.finditer(r"([A-Za-z])([\d\.]+)\s+([\d\.]+)\s*", svgdata):
+        if match:
+            cmd = match.group(1)
+            if cmd == "M":  ### Start of a new part
+                mx, my = match.group(2, 3)
+                if points:
+                    point_groups.append(points)
+                    points = []
+                points.append((float(mx), float(my)))
+                if debug:
+                    print("M pos", mx, my)
 
-                elif cmd == "L":  ### Continuation of current part
-                    x, y = match.group(2, 3)
-                    points.append((float(x), float(y)))
-                    if debug: print("L pos", x, y)
+            elif cmd == "L":  ### Continuation of current part
+                lx, ly = match.group(2, 3)
+                points.append((float(lx), float(ly)))
+                if debug:
+                    print("L pos", lx, ly)
 
-                else:
-                    print("SVG cmd not implemented:", cmd,
-                          file=sys.stderr)
             else:
-                print("some parsing issue",
+                print("SVG cmd not implemented:", cmd,
                       file=sys.stderr)
+        else:
+            print("some parsing issue",
+                  file=sys.stderr)
 
     # Add the last part to point_groups
     if points:
         point_groups.append(points)
         points = []
+
+
+def main(cmdlineargs):
+    """main(args)"""
+    global debug, verbose  ### pylint: disable=global-statement
+
+    try:
+        opts, _ = getopt.getopt(cmdlineargs,
+                                "dhv", ["help"])
+    except getopt.GetoptError as err:
+        print(err,
+              file=sys.stderr)
+        usage(2)
+    for opt, _ in opts:
+        if opt == "-d":
+            debug = True
+        elif opt == "-v":
+            verbose = True
+        elif opt in ("-h", "--help"):
+            usage(0)
+        else:
+            print("Internal error: unhandled option",
+                  file=sys.stderr)
+            sys.exit(3)
+
+    xml_ns = {"svg": "http://www.w3.org/2000/svg"}
+    tree = ET.parse(sys.stdin)
+    point_groups = []
+    for path in tree.findall("svg:path", xml_ns):
+        svgdata = path.attrib["d"]
+        if verbose:
+            print("Processing path with {0:d} length".format(len(svgdata)))
+        search_path_d(svgdata, point_groups)
+
+
 
     for idx, points in enumerate(point_groups):
         print("# Group", idx + 1)
