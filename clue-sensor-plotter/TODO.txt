@@ -1,0 +1,3 @@
+The white lines/grid on the back panels are not showing up well.
+
+The z axis label of "z" has some unfortunate positioning next to a negative sign.
