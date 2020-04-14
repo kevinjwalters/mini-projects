@@ -1,16 +1,11 @@
 #!/usr/bin/python3
 
-### Produces png test cards with a transparent middle
+### maketestcard v1.4
 
-### Testing with
-### test=NNN ; for res in 120x120 160x120 240x240 320x240 1280x720 ; do python maketestcard.py ${res} test-${test}-${res}.png ; done
+### Produces png test cards with a transparent middle with some optional
+### command line argument to support compositing with ImageMagick
 
-### TODO - think about some c0 desaturated values just under colour bars at top
-###        maybe bottom third at 40,0,0  and ff,c0,c0 for red
-### TODO - adjust so the 120x120 and 160x120 doesn't over write top/bottom colours bars by 1px
-### TODO - work out how to add optional logo and composite with background image
-### TODO - look at how subprocess works - can it do pipe in? pipe in and out at same time?
-
+### Code falls into the category of "messy, iffy in places but works"
 
 ### The MIT License (MIT)
 ###
@@ -39,6 +34,9 @@ import getopt
 import sys
 import struct
 import math
+import tempfile
+import subprocess
+import os
 
 import numpy as np
 import imageio
@@ -49,7 +47,9 @@ VERSION="1"
 
 ### globals
 debug = 1
-composite_filename = None
+convert_exec = "convert"
+composite = None  ### image plus any operations in ImageMagick to composite over
+extra = []        ### any additional images to composite afterwards, e.g. logo
 verbose = False
 output = "testcard.png"
 
@@ -442,19 +442,19 @@ def rgb_colour_linear_graduated(im, gap=None, bottom_gap=8, bottom=None,
                                 gap=gap)
 
 
-def image_cutout(im, radius=None):
+def image_cutout(im, radius=None, border=None):
     """A circular cut-out achieved with modifying transparency."""
     wid, hei, _ = im.shape
-
+    
     if radius is None:
-       radius = min(wid, hei) // 4 + 3.5
-
-    white_border = radius / 30.0
-
+        radius = min(wid, hei) // 4
+    if border is None:
+        border = radius / 30.0 + 0.5
+        
     filled_circle(im, WHITE,
                   radius=radius)
     filled_circle(im, (None, None, None, TRANSPARENT),
-                  radius=radius - white_border)
+                  radius=radius - border)
 
 
 def filled_circle(im, colour, radius=None):
@@ -501,10 +501,10 @@ def binary_write(im, text, x=None, y=None,
        x = 3
     if y is None:
        y = hei - 2
-    
+
     ### Make a binary representation of all the digits as a text string
     binary_text = "".join(["{0:{fill}8b}".format(ord(b), fill='0') for b in text])
-    
+
     xpos = x
     for bit_idx, bit in enumerate(binary_text):
         if bit == "1" and xpos < wid:
@@ -514,18 +514,20 @@ def binary_write(im, text, x=None, y=None,
 
 def main(cmdlineargs):
     global debug
-    global composite_filename, verbose
+    global composite, extra, verbose
 
     try:
         opts, args = getopt.getopt(cmdlineargs,
-                                   "c:hv", ["help"])
+                                   "c:e:hv", ["help"])
     except getopt.GetoptError as err:
         print(err,
               file=sys.stderr)
         usage(2)
     for opt, arg in opts:
         if opt == "-c":
-            composite_filename = arg
+            composite = arg
+        elif opt == "-e":
+            extra.append(arg)
         elif opt in ("-h", "--help"):
             usage(0)
         elif opt == "-v":
@@ -567,13 +569,27 @@ def main(cmdlineargs):
     binary_write(image, TESTCARD + " v" + VERSION)
     binary_write(image, "AYBABTU", y=2, colours=(GREY247,))
 
+    if composite:
+        d_print(2, "composite and extra args are", composite, extra)
+
+        ### Unclear if NamedTemporaryFile is secure or not given mkstemp
+        ### fp, tmp_filename = tempfile.mkstemp(suffix=".png")
+        fp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        tmp_filename = fp.name
+        ### not clear to me why I need to swap axes here
+        imageio.imwrite(fp, np.swapaxes(image, 0, 1), format="png")
+
+        args = [convert_exec]
+        args.append("\\( " + composite + " \\)")
+        args.append(tmp_filename)
+        args.append("-composite")
+        args.extend(["\\( " + e + " \\) -composite" for e in extra])
+        args.append(output)
+        subprocess.call(" ".join(args), shell=True)
+        os.remove(tmp_filename)
+    else:
     ### not clear to me why I need to swap axes here
-    imageio.imwrite(output, np.swapaxes(image, 0, 1))
-
-    if composite_filename:
-        print("TODO", "WRITE THIS!!!", "AND WORK OUT HOW TO DO INPUT AND OUTPUT FILENAMES")
-
-    ### convert \( lf-ab-1-1080.jpg -splice 160x0 -resize x360 -gravity center -extent 1280x720 +repage \) test-24-1280x720.png -composite ctest42.png
+        imageio.imwrite(output, np.swapaxes(image, 0, 1))
 
 
 if __name__ == "__main__":
