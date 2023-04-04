@@ -184,7 +184,7 @@ for (c_level in c(0.60, 0.80, 0.90, 0.95, 0.98, 0.99)) {
   ggsave(paste(filebase, filename, ".png", sep=""),
          g1a,
          dpi=100, height=24, width=24, units="in", limitsize = FALSE)
-  filename <- sprintf("-v2-upper-%.2f-z2", c_level * 100)
+  filename <- sprintf("-v3-upper-%.2f-z2", c_level * 100)
   ggsave(paste(filebase, filename, ".png", sep=""),
          g1b,
          dpi=100, height=24, width=24, units="in", limitsize = FALSE)
@@ -240,7 +240,7 @@ for (c_level in c(0.60, 0.80, 0.90, 0.95, 0.98, 0.99)) {
   ggsave(paste(filebase, filename, ".png", sep=""),
          g2a,
          dpi=100, height=24, width=24, units="in", limitsize = FALSE)
-  filename <- sprintf("-v2-lower-%.2f-z2", c_level * 100)
+  filename <- sprintf("-v3-lower-%.2f-z2", c_level * 100)
   ggsave(paste(filebase, filename, ".png", sep=""),
          g2b,
          dpi=100, height=24, width=24, units="in", limitsize = FALSE)
